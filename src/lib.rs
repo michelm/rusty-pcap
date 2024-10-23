@@ -1,14 +1,50 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+use pcap_parser::*;
+use pcap_parser::traits::PcapReaderIterator;
+use std::fs::File;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// Read a pcapng file and prints out it contents.
+/// 
+/// Returns error or number of blocks read.
+pub fn read_pcapng_file(fname: &str) -> Result<i32, String> {
+    let mut num_blocks = 0;
+    let file = match File::open(fname) {
+        Ok(f) => f,
+        Err(e) => {
+            return Err(e.to_string());
+        },
+    };
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+    let mut reader = match PcapNGReader::new(65536, file) {
+        Ok(r) => r,
+        Err(e) => {
+            return Err(e.to_string());
+        },
+    };
+
+    loop {
+        match reader.next() {
+            Ok((offset, block)) => {
+                match block {
+                    PcapBlockOwned::Legacy(legacy)    => {
+                        println!("{:04x}: [PKT]\n{:?}\n", offset, legacy);
+                    },
+                    PcapBlockOwned::LegacyHeader(header) => {
+                        println!("{:04x}: [HDR]\n{:?}\n", offset, header);
+                    },
+                    PcapBlockOwned::NG(packet) => {
+                        println!("{:04x}: [NG]\n{:?}\n", offset, packet);
+                    },
+                };
+                num_blocks += 1;
+                reader.consume(offset);
+            },
+            Err(PcapError::Eof) => break,
+            Err(PcapError::Incomplete(_)) => {
+                reader.refill().unwrap();
+            },
+            Err(e) => panic!("error while reading: {:?}", e),
+        }
     }
+
+    Ok(num_blocks)
 }
